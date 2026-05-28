@@ -9,7 +9,6 @@ import tempfile
 import csv
 import io
 import zipfile
-import shutil
 from datetime import datetime
 from docx import Document as DocxDocument
 
@@ -74,9 +73,10 @@ def parse_slide_markers_from_docx(file_bytes):
         out.append((t, n))
     return out
 
-def extract_slide_images(zip_bytes, dest_folder):
-    """Extract slide jpgs to dest_folder. Returns {slide_num: absolute_path}."""
-    os.makedirs(dest_folder, exist_ok=True)
+def extract_slide_images(zip_bytes):
+    """Read slide image bytes from an uploaded zip.
+    Returns {slide_num: (filename, image_bytes)}. Filenames are kept as-is for
+    re-bundling into the output zip's slides/ subfolder."""
     images = {}
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         for name in zf.namelist():
@@ -88,13 +88,11 @@ def extract_slide_images(zip_bytes, dest_folder):
             ext = os.path.splitext(base)[1].lower()
             if ext not in ('.jpg', '.jpeg', '.png'):
                 continue
-            target = os.path.join(dest_folder, base)
-            with zf.open(name) as src, open(target, 'wb') as dst:
-                shutil.copyfileobj(src, dst)
             stem = os.path.splitext(base)[0]
             num_match = re.search(r'(\d+)', stem)
             if num_match:
-                images[int(num_match.group(1))] = os.path.abspath(target)
+                with zf.open(name) as src:
+                    images[int(num_match.group(1))] = (base, src.read())
     return images
 
 MAX_SLIDE_DURATION = 12.0  # Hard cap per slide (seconds).
@@ -116,11 +114,12 @@ def build_slide_clips(markers, images, default_last_duration=MAX_SLIDE_DURATION)
             dur = max(0.5, min(MAX_SLIDE_DURATION, gap))
         else:
             dur = MAX_SLIDE_DURATION
+        filename, _bytes = images[n]
         clips.append({
             "slide_num": n,
             "time_in": t,
             "duration": dur,
-            "abs_path": images[n].replace("\\", "/"),
+            "filename": filename,  # bare name, e.g. "Slide1.jpg" — JSX resolves relative to its own folder
         })
     used_nums = {n for _, n in markers}
     for img_num in sorted(images.keys()):
@@ -131,9 +130,9 @@ def build_slide_clips(markers, images, default_last_duration=MAX_SLIDE_DURATION)
 def generate_slides_csv(slide_clips):
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Slide #", "Time In (s)", "Duration (s)", "Image Path"])
+    writer.writerow(["Slide #", "Time In (s)", "Duration (s)", "Bundled Filename"])
     for s in slide_clips:
-        writer.writerow([s["slide_num"], f"{s['time_in']:.3f}", f"{s['duration']:.3f}", s["abs_path"]])
+        writer.writerow([s["slide_num"], f"{s['time_in']:.3f}", f"{s['duration']:.3f}", s["filename"]])
     return output.getvalue()
 
 # --- PAGE CONFIG ---
@@ -357,21 +356,17 @@ if uploaded_file and api_key:
                 # --- SLIDE PIPELINE (parallel to MOGRT pipeline; does not touch cleaned_data) ---
                 slide_clips = []
                 slide_warnings = []
-                slide_dest_folder = ""
+                slide_images = {}  # {slide_num: (filename, bytes)} — bundled into output zip below
                 if uploaded_slide_doc and uploaded_slide_zip:
-                    home = os.path.expanduser("~")
-                    slide_dest_folder = os.path.abspath(
-                        os.path.join(home, "SpotlightBuddy_Slides", timestamp)
-                    )
                     try:
                         markers = parse_slide_markers_from_docx(uploaded_slide_doc.getvalue())
-                        images = extract_slide_images(uploaded_slide_zip.getvalue(), slide_dest_folder)
-                        slide_clips, slide_warnings = build_slide_clips(markers, images)
+                        slide_images = extract_slide_images(uploaded_slide_zip.getvalue())
+                        slide_clips, slide_warnings = build_slide_clips(markers, slide_images)
 
                         with st.expander(f"🖼️ Slide Pipeline: {len(slide_clips)} slides paired", expanded=False):
                             st.write(f"**Markers parsed:** {len(markers)}")
-                            st.write(f"**Images extracted:** {len(images)}")
-                            st.write(f"**Slide folder:** `{slide_dest_folder}`")
+                            st.write(f"**Images extracted:** {len(slide_images)}")
+                            st.caption("Slide JPGs will be bundled into the output zip under `slides/`. The .jsx resolves them relative to wherever the producer unzips the package.")
                             if slide_warnings:
                                 for w in slide_warnings:
                                     st.warning(w)
@@ -379,6 +374,7 @@ if uploaded_file and api_key:
                     except Exception as slide_err:
                         st.warning(f"Slide pipeline skipped due to error (MOGRT pipeline unaffected): {slide_err}")
                         slide_clips = []
+                        slide_images = {}
                 elif uploaded_slide_doc or uploaded_slide_zip:
                     st.info("Slide pipeline needs BOTH the .docx markers and the .zip of images. Skipping slides.")
 
@@ -485,6 +481,12 @@ if uploaded_file and api_key:
                 if (slideList.length > 0) {
                     var slideTrack = sequence.videoTracks[0];
 
+                    // Resolve slide folder relative to THIS script's location.
+                    // Producer unzips the package anywhere; slides/ sits next to the .jsx.
+                    var scriptFile = new File($.fileName);
+                    var slideFolder = scriptFile.parent.fsName + "/slides/";
+                    log("Slide folder (relative to script): " + slideFolder);
+
                     // Build MOGRT busy intervals from videoTracks[1] so slides never overlap a graphic.
                     var mogrtBusy = [];
                     var mogrtTrackRef = sequence.videoTracks[1];
@@ -500,11 +502,18 @@ if uploaded_file and api_key:
                         preExisting[project.rootItem.children[pi].name] = true;
                     }
 
-                    // Import all slide images at once into the root bin.
+                    // Build absolute paths from the script's folder + bundled filename, then import all at once.
                     var slidePaths = [];
-                    for (var si = 0; si < slideList.length; si++) slidePaths.push(slideList[si].abs_path);
+                    for (var si = 0; si < slideList.length; si++) {
+                        var f = new File(slideFolder + slideList[si].filename);
+                        if (!f.exists) {
+                            log("MISSING SLIDE FILE: " + f.fsName);
+                            continue;
+                        }
+                        slidePaths.push(f.fsName);
+                    }
                     try {
-                        project.importFiles(slidePaths, false, project.rootItem, false);
+                        if (slidePaths.length > 0) project.importFiles(slidePaths, false, project.rootItem, false);
                     } catch (impErr) {
                         log("SLIDE IMPORT ERROR: " + impErr.toString());
                     }
@@ -520,7 +529,7 @@ if uploaded_file and api_key:
 
                     for (var si = 0; si < slideList.length; si++) {
                         var s = slideList[si];
-                        var fname = s.abs_path.replace(/\\\\/g, '/').split('/').pop();
+                        var fname = s.filename;
                         var stem = fname.replace(/\\.[^.]+$/, '');
                         var item = slideItemMap[fname] || slideItemMap[stem];
                         if (!item) {
@@ -610,6 +619,22 @@ if uploaded_file and api_key:
                     zf.writestr(f"WebMD_Spotlight_Overview_{timestamp}.csv", csv_content.encode("utf-8"))
                     if slides_csv_content:
                         zf.writestr(f"WebMD_Slides_Overview_{timestamp}.csv", slides_csv_content.encode("utf-8"))
+                    # Bundle slide JPGs alongside the .jsx so the script can find them via a relative path.
+                    for _num, (fname, fbytes) in slide_images.items():
+                        zf.writestr(f"slides/{fname}", fbytes)
+                    if slide_clips:
+                        zf.writestr(
+                            "README_FOR_EDITOR.txt",
+                            (
+                                "Spotlight Buddy package\n"
+                                "=======================\n\n"
+                                "1. Unzip this entire folder anywhere on your Mac (Desktop is fine).\n"
+                                "2. Open your Premiere project.\n"
+                                "3. Double-click the .jsx file (or run it via File > Scripts > Run Script File).\n\n"
+                                "IMPORTANT: Keep the .jsx file and the 'slides' folder TOGETHER in the same\n"
+                                "folder. The script reads slide images from ./slides/ relative to itself.\n"
+                            ).encode("utf-8"),
+                        )
                 
                 zip_bytes = zip_buffer.getvalue()
 
