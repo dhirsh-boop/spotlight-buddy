@@ -136,7 +136,7 @@ def generate_slides_csv(slide_clips):
     return output.getvalue()
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="WebMD Spotlight Buddy V1.8.2", layout="wide")
+st.set_page_config(page_title="WebMD Spotlight Buddy V1.8.3", layout="wide")
 
 # --- SIDEBAR (Logo & Settings) ---
 with st.sidebar:
@@ -145,7 +145,7 @@ with st.sidebar:
     api_key = st.text_input("Gemini API Key", value="AIzaSyB3kkk1T9e8vLeFhTseMRaxrxsxIrTlILE", type="password")
 
 # --- MAIN TITLE ---
-st.title("WebMD Spotlight Buddy V1.8.2")
+st.title("WebMD Spotlight Buddy V1.8.3")
 st.markdown("Automated Adobe Premiere Pro Script Generator (Direct JSX Injection)")
 
 # --- HELPER FUNCTION: Convert Time to Seconds ---
@@ -204,7 +204,7 @@ col1, col2 = st.columns(2)
 with col1:
     uploaded_file = st.file_uploader("1. Upload Transcript (.vtt)", type=["vtt"])
 with col2:
-    uploaded_pdf = st.file_uploader("2. Optional: Upload Context PDF (Objectives/Bios)", type=["pdf"])
+    uploaded_pdfs = st.file_uploader("2. Optional: Upload Context PDF(s) (Objectives/Bios/Slides)", type=["pdf"], accept_multiple_files=True)
 
 st.markdown("---")
 st.markdown("### Optional: Automated Slide Syncing")
@@ -236,31 +236,25 @@ if uploaded_file and api_key:
     Do NOT use quotation marks when summarizing information, only use them when quoting verbatim from transcript.
     
     GRAPHIC TYPES & EXACT FIELD RULES (CRITICAL: NEVER alter the 'mogrt_name' ID):
-    
-    1. Program Title: 'EDU-GFX-02-TITLE' (Field: Title_Text).
-       - STRICT RULE: Use EXACTLY ONCE at timestamp "00:00:00".
-       - STRICT RULE: Scan the provided PDF specifically for the "Title" section or document header to find the accurate program title. If no PDF is provided, use the transcript as a backup.
-       - EXCEPTION RULE: Use the ENTIRE program title exactly as written. DO NOT truncate, shorten, or adhere to character limits for this specific graphic. Insert '\\n' manually at logical breaking points for visual balance.
-    
-    2. Speaker Intro: 'EDU-GFX-02-SPLIT NAME' (Fields: Name, Dropline). 
-       - RULE: Create one for EVERY unique speaker/guest. Place at their very first sentence.
-       - FORMAT Name: Max 15 chars per line, max 3 lines. Insert '\\n' manually. 
-         Example: "Melinda J.\\nGooderham,\\nMD, MSc, FRCPC"
-       - FORMAT Dropline: Pull credentials from PDF. Max 40 chars per line, max 4 lines. Insert '\\n' manually. 
-         Example: "Assistant Professor, Queens University\\nMedical Director, SKiN Centre for\\nDermatology\\nPeterborough, Ontario, Canada"
-    
-    3. Banner Quote (Medium): 'EDU-GFX-05-BANNER' (Field: Main_Text).
-       - RULE: Use for important emphasis quotes (40-90 chars). Insert '\\n' to balance visually.
 
-    4. Short Quote (Small): 'EDU-GFX-04-SPLIT-QUOTE' (Field: Main_Text).
+    1. Speaker Intro: 'EDU-GFX-02-SPLIT NAME' (Fields: Name, Dropline).
+       - RULE: Create one for EVERY unique speaker/guest. Place at their very first sentence.
+       - FORMAT Name: Max 15 chars per line, max 3 lines. Insert '\\n' manually.
+         Example: "Melinda J.\\nGooderham,\\nMD, MSc, FRCPC"
+       - FORMAT Dropline: Pull credentials from PDF. Max 40 chars per line, max 4 lines. Insert '\\n' manually.
+         Example: "Assistant Professor, Queens University\\nMedical Director, SKiN Centre for\\nDermatology\\nPeterborough, Ontario, Canada"
+
+    2. Short Quote (Small): 'EDU-GFX-04-SPLIT-QUOTE' (Field: Main_Text).
        - RULE: Use for short, punchy quotes (< 50 chars). Insert '\\n' every ~25 characters.
-    
-    5. Full Screen Quote (Long): 'EDU-GFX-07-FS' (Field: Main_Text).
+
+    3. Full Screen Quote (Long): 'EDU-GFX-07-FS' (Field: Main_Text).
        - RULE: Use for long quotes (> 90 chars).
-    
-    6. Lists: 'EDU-GFX-07-FS Bullet Point' (Fields: Title_Text, bullet-01, bullet-02, bullet-03, bullet-04, bullet-05).
+
+    4. Lists: 'EDU-GFX-07-FS Bullet Point' (Fields: Title_Text, bullet-01, bullet-02, bullet-03, bullet-04, bullet-05).
        - RULE: You MUST provide a 'Title_Text' that summarizes the list (e.g., "Key Symptoms").
        - RULE: Always try to provide 5 bullets. Summarize or split concepts to fill them out.
+
+    BANNED GRAPHICS: Do NOT generate 'EDU-GFX-02-TITLE' (Program Title) or 'EDU-GFX-05-BANNER' (Banner Quote) under any circumstances. These graphic types are retired and must never appear in your output, even if the content seems to fit them.
 
     CRITICAL INSTRUCTIONS:
     - ANTI-LAZINESS: The provided transcript ends at exactly {final_timestamp}. You MUST process the ENTIRE transcript from start to finish. Ensure there is a graphic every ~60 seconds all the way up to {final_timestamp}. Do NOT stop early.
@@ -269,15 +263,15 @@ if uploaded_file and api_key:
     OUTPUT FORMAT (JSON List ONLY):
     [
         {{
-            "time_in": "00:00:00",
-            "mogrt_name": "EDU-GFX-02-TITLE",
-            "Title_Text": "The View on\\nChronic\\nHand Eczema"
-        }},
-        {{
             "time_in": "00:01:30",
             "mogrt_name": "EDU-GFX-02-SPLIT NAME",
             "Name": "Melinda J.\\nGooderham,\\nMD, MSc, FRCPC",
             "Dropline": "Assistant Professor, Queens University\\nMedical Director, SKiN Centre for\\nDermatology\\nPeterborough, Ontario, Canada"
+        }},
+        {{
+            "time_in": "00:03:15",
+            "mogrt_name": "EDU-GFX-04-SPLIT-QUOTE",
+            "Main_Text": "This changes\\nhow we treat\\nchronic cases"
         }}
     ]
     """
@@ -295,17 +289,19 @@ if uploaded_file and api_key:
                 chat = model.start_chat()
                 prompt_parts = [f"VIDEO TRANSCRIPT:\n{transcript_text}"]
 
-                if uploaded_pdf:
+                for pdf_idx, pdf_file in enumerate(uploaded_pdfs):
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                        tmp.write(uploaded_pdf.getvalue())
+                        tmp.write(pdf_file.getvalue())
                         tmp_path = tmp.name
-                    
+
                     try:
-                        context_file = genai.upload_file(path=tmp_path, display_name="Context_Objectives")
+                        context_file = genai.upload_file(path=tmp_path, display_name=f"Context_Objectives_{pdf_idx + 1}")
                         prompt_parts.append(context_file)
-                        prompt_parts.append("Refer to the uploaded PDF for the EXACT Program Title, Learning Objectives, speaker credentials, and accurate clinical data.")
                     finally:
                         os.unlink(tmp_path)
+
+                if uploaded_pdfs:
+                    prompt_parts.append("Refer to the uploaded PDF(s) for Learning Objectives, speaker credentials, slide content, and accurate clinical data.")
                 
                 response = chat.send_message(prompt_parts)
                 full_response_text = response.text.strip()
