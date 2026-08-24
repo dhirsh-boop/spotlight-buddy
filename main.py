@@ -1,6 +1,8 @@
 import streamlit as st
 import google.generativeai as genai
 from google.generativeai.types import GenerationConfig
+from google.api_core import retry as api_retry
+from google.api_core import exceptions as google_exceptions
 import webvtt
 import json
 import re
@@ -96,6 +98,14 @@ def extract_slide_images(zip_bytes):
     return images
 
 MAX_SLIDE_DURATION = 12.0  # Hard cap per slide (seconds).
+
+# Long transcripts + multiple context PDFs can push Gemini generation past the
+# SDK's default deadline, surfacing as "504 Deadline Exceeded". Give it more
+# room and retry transient server-side failures instead of failing the whole run.
+GEMINI_REQUEST_OPTIONS = {
+    "timeout": 600,
+    "retry": api_retry.Retry(predicate=api_retry.if_transient_error, initial=2.0, maximum=30.0, timeout=600.0),
+}
 
 def build_slide_clips(markers, images, default_last_duration=MAX_SLIDE_DURATION):
     """Combine markers + images into slide clip dicts ready for JSX serialization.
@@ -303,14 +313,17 @@ if uploaded_file and api_key:
                 if uploaded_pdfs:
                     prompt_parts.append("Refer to the uploaded PDF(s) for Learning Objectives, speaker credentials, slide content, and accurate clinical data.")
                 
-                response = chat.send_message(prompt_parts)
+                response = chat.send_message(prompt_parts, request_options=GEMINI_REQUEST_OPTIONS)
                 full_response_text = response.text.strip()
-                
+
                 for _ in range(8):
-                    if full_response_text.endswith("]"): 
+                    if full_response_text.endswith("]"):
                         break
                     print("Continuation triggered...")
-                    cont_response = chat.send_message(f"Your JSON array was truncated. Continue exactly where you left off. You must reach {final_timestamp}.")
+                    cont_response = chat.send_message(
+                        f"Your JSON array was truncated. Continue exactly where you left off. You must reach {final_timestamp}.",
+                        request_options=GEMINI_REQUEST_OPTIONS,
+                    )
                     if cont_response.text:
                         full_response_text += cont_response.text.strip()
                 
@@ -639,5 +652,7 @@ if uploaded_file and api_key:
 
             except json.JSONDecodeError as e:
                 st.error(f"Failed to parse JSON (the AI likely timed out or hallucinated structure): {e}")
-            except Exception as e: 
+            except google_exceptions.DeadlineExceeded:
+                st.error("Gemini took too long to respond (504 Deadline Exceeded), even after extending the timeout to 10 minutes. This usually means the transcript + PDFs are large, or Google's API is under heavy load. Try again, or split the transcript into a shorter section.")
+            except Exception as e:
                 st.error(f"Error: {e}")
