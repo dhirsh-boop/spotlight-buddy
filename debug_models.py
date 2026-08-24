@@ -1,15 +1,15 @@
-import google.generativeai as genai
+import anthropic
 import os
 
-# Paste your API Key here just for this test
-api_key = "AIzaSyB3kkk1T9e8vLeFhTseMRaxrxsxIrTlILE"
+api_key = os.environ.get("ANTHROPIC_API_KEY")
+if not api_key:
+    raise SystemExit("Set the ANTHROPIC_API_KEY environment variable before running this script.")
 
-genai.configure(api_key=api_key)
+client = anthropic.Anthropic(api_key=api_key)
 
 print("Searching for available models...")
 try:
-    for m in genai.list_models():
-        if 'generateContent' in m.supported_generation_methods:
-            print(f"- {m.name}")
+    for m in client.models.list():
+        print(f"- {m.id}")
 except Exception as e:
     print(f"Error: {e}")

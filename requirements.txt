@@ -1,5 +1,5 @@
 streamlit
 pandas
-google-generativeai
+anthropic
 webvtt-py
 python-docx

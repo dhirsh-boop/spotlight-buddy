@@ -1,13 +1,10 @@
 import streamlit as st
-import google.generativeai as genai
-from google.generativeai.types import GenerationConfig
-from google.api_core import retry as api_retry
-from google.api_core import exceptions as google_exceptions
+import anthropic
+import base64
 import webvtt
 import json
 import re
 import os
-import tempfile
 import csv
 import io
 import zipfile
@@ -99,12 +96,41 @@ def extract_slide_images(zip_bytes):
 
 MAX_SLIDE_DURATION = 12.0  # Hard cap per slide (seconds).
 
-# Long transcripts + multiple context PDFs can push Gemini generation past the
-# SDK's default deadline, surfacing as "504 Deadline Exceeded". Give it more
-# room and retry transient server-side failures instead of failing the whole run.
-GEMINI_REQUEST_OPTIONS = {
-    "timeout": 600,
-    "retry": api_retry.Retry(predicate=api_retry.if_transient_error, initial=2.0, maximum=30.0, timeout=600.0),
+# Cheapest/fastest tier - chosen over Opus/Sonnet since this tool runs a few
+# times a day per person; swap to "claude-opus-5" or "claude-sonnet-5" for
+# higher quality if Haiku's output isn't good enough on real transcripts.
+CLAUDE_MODEL = "claude-haiku-4-5"
+
+# Structured-output schema: guarantees Claude's response is valid JSON matching
+# this shape, so no markdown-fence stripping or truncation-continuation dance is
+# needed the way it was with Gemini's freeform JSON mode.
+GRAPHICS_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "graphics": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "time_in": {"type": "string"},
+                    "mogrt_name": {"type": "string"},
+                    "Title_Text": {"type": "string"},
+                    "Name": {"type": "string"},
+                    "Dropline": {"type": "string"},
+                    "Main_Text": {"type": "string"},
+                    "bullet-01": {"type": "string"},
+                    "bullet-02": {"type": "string"},
+                    "bullet-03": {"type": "string"},
+                    "bullet-04": {"type": "string"},
+                    "bullet-05": {"type": "string"},
+                },
+                "required": ["time_in", "mogrt_name"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["graphics"],
+    "additionalProperties": False,
 }
 
 def build_slide_clips(markers, images, default_last_duration=MAX_SLIDE_DURATION):
@@ -146,16 +172,16 @@ def generate_slides_csv(slide_clips):
     return output.getvalue()
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="WebMD Spotlight Buddy V1.8.3", layout="wide")
+st.set_page_config(page_title="WebMD Spotlight Buddy V1.9.0", layout="wide")
 
 # --- SIDEBAR (Logo & Settings) ---
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/4/42/WebMD_logo.png", width=150)
     st.header("Settings")
-    api_key = st.text_input("Gemini API Key", value="AIzaSyB3kkk1T9e8vLeFhTseMRaxrxsxIrTlILE", type="password")
+    api_key = st.text_input("Anthropic API Key", type="password")
 
 # --- MAIN TITLE ---
-st.title("WebMD Spotlight Buddy V1.8.3")
+st.title("WebMD Spotlight Buddy V1.9.0")
 st.markdown("Automated Adobe Premiere Pro Script Generator (Direct JSX Injection)")
 
 # --- HELPER FUNCTION: Convert Time to Seconds ---
@@ -226,8 +252,8 @@ with col4:
     uploaded_slide_zip = st.file_uploader("4. Slide Images (.zip of JPGs)", type=["zip"])
 
 if uploaded_file and api_key:
-    genai.configure(api_key=api_key)
-    
+    client = anthropic.Anthropic(api_key=api_key, timeout=600.0, max_retries=3)
+
     # 1. PARSE VTT
     with open("temp.vtt", "wb") as f: f.write(uploaded_file.getbuffer())
     vtt = webvtt.read("temp.vtt")
@@ -235,7 +261,7 @@ if uploaded_file and api_key:
     
     final_timestamp = vtt[-1].end if vtt else "the end of the video"
 
-    # 2. GEMINI PROMPT
+    # 2. CLAUDE PROMPT
     system_prompt = f"""
     You are an expert Medical Video Editor Assistant. Select graphics based on WebMD rules.
     You will be provided with a VIDEO TRANSCRIPT and an optional CONTEXT PDF.
@@ -270,70 +296,64 @@ if uploaded_file and api_key:
     - ANTI-LAZINESS: The provided transcript ends at exactly {final_timestamp}. You MUST process the ENTIRE transcript from start to finish. Ensure there is a graphic every ~60 seconds all the way up to {final_timestamp}. Do NOT stop early.
     - TIMESTAMPS: The 'time_in' field MUST be formatted as a string (e.g., "00:19:23"). Do NOT use decimals.
     
-    OUTPUT FORMAT (JSON List ONLY):
-    [
-        {{
-            "time_in": "00:01:30",
-            "mogrt_name": "EDU-GFX-02-SPLIT NAME",
-            "Name": "Melinda J.\\nGooderham,\\nMD, MSc, FRCPC",
-            "Dropline": "Assistant Professor, Queens University\\nMedical Director, SKiN Centre for\\nDermatology\\nPeterborough, Ontario, Canada"
-        }},
-        {{
-            "time_in": "00:03:15",
-            "mogrt_name": "EDU-GFX-04-SPLIT-QUOTE",
-            "Main_Text": "This changes\\nhow we treat\\nchronic cases"
-        }}
-    ]
+    OUTPUT FORMAT (a "graphics" array):
+    {{
+        "graphics": [
+            {{
+                "time_in": "00:01:30",
+                "mogrt_name": "EDU-GFX-02-SPLIT NAME",
+                "Name": "Melinda J.\\nGooderham,\\nMD, MSc, FRCPC",
+                "Dropline": "Assistant Professor, Queens University\\nMedical Director, SKiN Centre for\\nDermatology\\nPeterborough, Ontario, Canada"
+            }},
+            {{
+                "time_in": "00:03:15",
+                "mogrt_name": "EDU-GFX-04-SPLIT-QUOTE",
+                "Main_Text": "This changes\\nhow we treat\\nchronic cases"
+            }}
+        ]
+    }}
     """
 
     if st.button("Generate Premiere Script", type="primary"):
-        with st.spinner(f"Gemini is analyzing the program up to {final_timestamp}. This may take a minute for long videos..."):
+        with st.spinner(f"Claude is analyzing the program up to {final_timestamp}. This may take a minute for long videos..."):
             try:
                 # --- GENERATION ---
-                model = genai.GenerativeModel(
-                    model_name='gemini-flash-latest', 
-                    system_instruction=system_prompt,
-                    generation_config=GenerationConfig(response_mime_type="application/json")
+                content_blocks = []
+                for pdf_file in uploaded_pdfs:
+                    pdf_b64 = base64.standard_b64encode(pdf_file.getvalue()).decode("utf-8")
+                    content_blocks.append({
+                        "type": "document",
+                        "source": {"type": "base64", "media_type": "application/pdf", "data": pdf_b64},
+                    })
+
+                transcript_note = (
+                    "\n\nRefer to the PDF(s) above for Learning Objectives, speaker credentials, "
+                    "slide content, and accurate clinical data."
+                    if uploaded_pdfs else ""
                 )
-                
-                chat = model.start_chat()
-                prompt_parts = [f"VIDEO TRANSCRIPT:\n{transcript_text}"]
+                content_blocks.append({"type": "text", "text": f"VIDEO TRANSCRIPT:\n{transcript_text}{transcript_note}"})
 
-                for pdf_idx, pdf_file in enumerate(uploaded_pdfs):
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                        tmp.write(pdf_file.getvalue())
-                        tmp_path = tmp.name
+                # Structured output guarantees valid JSON matching GRAPHICS_OUTPUT_SCHEMA, so there's
+                # no markdown-fence stripping or truncation-continuation loop needed here.
+                with client.messages.stream(
+                    model=CLAUDE_MODEL,
+                    max_tokens=64000,
+                    system=system_prompt,
+                    output_config={"format": {"type": "json_schema", "schema": GRAPHICS_OUTPUT_SCHEMA}},
+                    messages=[{"role": "user", "content": content_blocks}],
+                ) as stream:
+                    response = stream.get_final_message()
 
-                    try:
-                        context_file = genai.upload_file(path=tmp_path, display_name=f"Context_Objectives_{pdf_idx + 1}")
-                        prompt_parts.append(context_file)
-                    finally:
-                        os.unlink(tmp_path)
-
-                if uploaded_pdfs:
-                    prompt_parts.append("Refer to the uploaded PDF(s) for Learning Objectives, speaker credentials, slide content, and accurate clinical data.")
-                
-                response = chat.send_message(prompt_parts, request_options=GEMINI_REQUEST_OPTIONS)
-                full_response_text = response.text.strip()
-
-                for _ in range(8):
-                    if full_response_text.endswith("]"):
-                        break
-                    print("Continuation triggered...")
-                    cont_response = chat.send_message(
-                        f"Your JSON array was truncated. Continue exactly where you left off. You must reach {final_timestamp}.",
-                        request_options=GEMINI_REQUEST_OPTIONS,
+                if response.stop_reason == "max_tokens":
+                    raise RuntimeError(
+                        "Claude's response hit the output length limit before finishing. "
+                        "Try a shorter transcript or fewer/shorter context PDFs."
                     )
-                    if cont_response.text:
-                        full_response_text += cont_response.text.strip()
-                
-                full_response_text = re.sub(r'^```json\s*|```\s*$', '', full_response_text, flags=re.MULTILINE).strip()
-                if not full_response_text.endswith("]"): 
-                    full_response_text += "]"
-                
-                raw_data = json.loads(full_response_text)
-                
-                with st.expander("🔍 View Raw JSON from Gemini", expanded=False):
+
+                full_response_text = next(b.text for b in response.content if b.type == "text")
+                raw_data = json.loads(full_response_text)["graphics"]
+
+                with st.expander("🔍 View Raw JSON from Claude", expanded=False):
                     st.json(raw_data)
                 
                 cleaned_data = []
@@ -410,7 +430,7 @@ if uploaded_file and api_key:
                     log("\\n--- Graphic " + (i+1) + ": " + g.mogrt_name + " ---");
                     
                     if (g.mogrt_name == "UNKNOWN") {
-                        log("SKIPPING: Gemini failed to name this graphic.");
+                        log("SKIPPING: Claude failed to name this graphic.");
                         continue;
                     }
 
@@ -651,8 +671,18 @@ if uploaded_file and api_key:
                 st.download_button("📥 Download Spotlight Package (.zip)", zip_bytes, f"WebMD_Spotlight_Package_{timestamp}.zip", "application/zip", use_container_width=True)
 
             except json.JSONDecodeError as e:
-                st.error(f"Failed to parse JSON (the AI likely timed out or hallucinated structure): {e}")
-            except google_exceptions.DeadlineExceeded:
-                st.error("Gemini took too long to respond (504 Deadline Exceeded), even after extending the timeout to 10 minutes. This usually means the transcript + PDFs are large, or Google's API is under heavy load. Try again, or split the transcript into a shorter section.")
+                st.error(f"Failed to parse JSON (the AI likely hit the length limit or hallucinated structure): {e}")
+            except anthropic.AuthenticationError as e:
+                st.error(f"Authentication error from Claude: {e.message}. Check that your Anthropic API key is valid.")
+            except anthropic.PermissionDeniedError as e:
+                st.error(f"Claude rejected the request due to a permissions issue: {e.message}")
+            except anthropic.RateLimitError:
+                st.error("Claude rate-limited this request (429). Wait a moment and try again.")
+            except anthropic.APITimeoutError:
+                st.error("Claude took too long to respond, even with the extended timeout. This usually means the transcript + PDFs are large, or the API is under heavy load. Try again, or split the transcript into a shorter section.")
+            except anthropic.APIStatusError as e:
+                st.error(f"Claude server error ({e.status_code}): {e.message}. Try again in a few minutes.")
+            except anthropic.APIConnectionError:
+                st.error("Network error connecting to Claude's API. Check your internet connection and try again.")
             except Exception as e:
                 st.error(f"Error: {e}")
