@@ -175,10 +175,20 @@ def generate_slides_csv(slide_clips):
 st.set_page_config(page_title="WebMD Spotlight Buddy V1.9.0", layout="wide")
 
 # --- SIDEBAR (Logo & Settings) ---
+# Key comes from Streamlit secrets (set in .streamlit/secrets.toml locally, or
+# the app's Settings -> Secrets on Streamlit Cloud) - never hardcoded in source,
+# since this repo is public. Producers never see a key field when it's configured;
+# the manual field is just a fallback for local dev/troubleshooting.
+try:
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+except st.errors.StreamlitSecretNotFoundError:
+    api_key = ""
+
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/4/42/WebMD_logo.png", width=150)
     st.header("Settings")
-    api_key = st.text_input("Anthropic API Key", type="password")
+    if not api_key:
+        api_key = st.text_input("Anthropic API Key", type="password")
 
 # --- MAIN TITLE ---
 st.title("WebMD Spotlight Buddy V1.9.0")
