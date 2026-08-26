@@ -172,7 +172,7 @@ def generate_slides_csv(slide_clips):
     return output.getvalue()
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="WebMD Spotlight Buddy V1.9.0", layout="wide")
+st.set_page_config(page_title="WebMD Spotlight Buddy V1.9.1", layout="wide")
 
 # --- SIDEBAR (Logo & Settings) ---
 # Key comes from Streamlit secrets (set in .streamlit/secrets.toml locally, or
@@ -191,7 +191,7 @@ with st.sidebar:
         api_key = st.text_input("Anthropic API Key", type="password")
 
 # --- MAIN TITLE ---
-st.title("WebMD Spotlight Buddy V1.9.0")
+st.title("WebMD Spotlight Buddy V1.9.1")
 st.markdown("Automated Adobe Premiere Pro Script Generator (Direct JSX Injection)")
 
 # --- HELPER FUNCTION: Convert Time to Seconds ---
@@ -283,24 +283,24 @@ if uploaded_file and api_key:
     
     GRAPHIC TYPES & EXACT FIELD RULES (CRITICAL: NEVER alter the 'mogrt_name' ID):
 
-    1. Speaker Intro: 'EDU-GFX-02-SPLIT NAME' (Fields: Name, Dropline).
+    1. Speaker Intro: 'EDU-GFX-03-SPLIT NAME-HD' (Fields: Name, Dropline).
        - RULE: Create one for EVERY unique speaker/guest. Place at their very first sentence.
        - FORMAT Name: Max 15 chars per line, max 3 lines. Insert '\\n' manually.
          Example: "Melinda J.\\nGooderham,\\nMD, MSc, FRCPC"
        - FORMAT Dropline: Pull credentials from PDF. Max 40 chars per line, max 4 lines. Insert '\\n' manually.
          Example: "Assistant Professor, Queens University\\nMedical Director, SKiN Centre for\\nDermatology\\nPeterborough, Ontario, Canada"
 
-    2. Short Quote (Small): 'EDU-GFX-04-SPLIT-QUOTE' (Field: Main_Text).
+    2. Short Quote (Small): 'EDU-GFX-04-SPLIT-QUOTE-HD' (Field: Main_Text).
        - RULE: Use for short, punchy quotes (< 50 chars). Insert '\\n' every ~25 characters.
 
-    3. Full Screen Quote (Long): 'EDU-GFX-07-FS' (Field: Main_Text).
+    3. Full Screen Quote (Long): 'EDU-GFX-07-FS-HD' (Field: Main_Text).
        - RULE: Use for long quotes (> 90 chars).
 
-    4. Lists: 'EDU-GFX-07-FS Bullet Point' (Fields: Title_Text, bullet-01, bullet-02, bullet-03, bullet-04, bullet-05).
+    4. Lists: 'EDU-GFX-07-FS Bullet Point-HD' (Fields: Title_Text, bullet-01, bullet-02, bullet-03, bullet-04, bullet-05).
        - RULE: You MUST provide a 'Title_Text' that summarizes the list (e.g., "Key Symptoms").
        - RULE: Always try to provide 5 bullets. Summarize or split concepts to fill them out.
 
-    BANNED GRAPHICS: Do NOT generate 'EDU-GFX-02-TITLE' (Program Title) or 'EDU-GFX-05-BANNER' (Banner Quote) under any circumstances. These graphic types are retired and must never appear in your output, even if the content seems to fit them.
+    BANNED GRAPHICS: Do NOT generate 'EDU-GFX-02-TITLE-HD' (Program Title) or 'EDU-GFX-05-BANNER HD' (Banner Quote) under any circumstances. These graphic types are retired and must never appear in your output, even if the content seems to fit them.
 
     CRITICAL INSTRUCTIONS:
     - ANTI-LAZINESS: The provided transcript ends at exactly {final_timestamp}. You MUST process the ENTIRE transcript from start to finish. Ensure there is a graphic every ~60 seconds all the way up to {final_timestamp}. Do NOT stop early.
@@ -311,13 +311,13 @@ if uploaded_file and api_key:
         "graphics": [
             {{
                 "time_in": "00:01:30",
-                "mogrt_name": "EDU-GFX-02-SPLIT NAME",
+                "mogrt_name": "EDU-GFX-03-SPLIT NAME-HD",
                 "Name": "Melinda J.\\nGooderham,\\nMD, MSc, FRCPC",
                 "Dropline": "Assistant Professor, Queens University\\nMedical Director, SKiN Centre for\\nDermatology\\nPeterborough, Ontario, Canada"
             }},
             {{
                 "time_in": "00:03:15",
-                "mogrt_name": "EDU-GFX-04-SPLIT-QUOTE",
+                "mogrt_name": "EDU-GFX-04-SPLIT-QUOTE-HD",
                 "Main_Text": "This changes\\nhow we treat\\nchronic cases"
             }}
         ]
@@ -635,7 +635,7 @@ if uploaded_file and api_key:
                             if (found) return found;
                         } else {
                             if (item.name.indexOf(name) >= 0) {
-                                if (name == "EDU-GFX-07-FS" && item.name.indexOf("Bullet") > -1) continue;
+                                if (name == "EDU-GFX-07-FS-HD" && item.name.indexOf("Bullet") > -1) continue;
                                 return item;
                             }
                         }
