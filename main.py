@@ -172,7 +172,7 @@ def generate_slides_csv(slide_clips):
     return output.getvalue()
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="WebMD Spotlight Buddy V1.9.1", layout="wide")
+st.set_page_config(page_title="WebMD Spotlight Buddy V1.9.2", layout="wide")
 
 # --- SIDEBAR (Logo & Settings) ---
 # Key comes from Streamlit secrets (set in .streamlit/secrets.toml locally, or
@@ -191,7 +191,7 @@ with st.sidebar:
         api_key = st.text_input("Anthropic API Key", type="password")
 
 # --- MAIN TITLE ---
-st.title("WebMD Spotlight Buddy V1.9.1")
+st.title("WebMD Spotlight Buddy V1.9.2")
 st.markdown("Automated Adobe Premiere Pro Script Generator (Direct JSX Injection)")
 
 # --- HELPER FUNCTION: Convert Time to Seconds ---
@@ -304,6 +304,7 @@ if uploaded_file and api_key:
 
     CRITICAL INSTRUCTIONS:
     - ANTI-LAZINESS: The provided transcript ends at exactly {final_timestamp}. You MUST process the ENTIRE transcript from start to finish. Ensure there is a graphic every ~60 seconds all the way up to {final_timestamp}. Do NOT stop early.
+    - PACING CAP (HARD RULE): Target roughly ONE graphic per 60 seconds — not more. Before adding any graphic, check the time_in of the PREVIOUS graphic you placed (of ANY type, including a Speaker Intro): if it is less than 50 seconds earlier, do NOT add this one — skip it, even if the moment is quote-worthy. The only exception is the Speaker Intro graphic itself, which may always be placed at a speaker's first sentence regardless of spacing — but the NEXT graphic after it still must wait at least 50 seconds from the Speaker Intro's own time_in. After drafting the full list, re-check every consecutive pair of timestamps and delete entries that violate the 50-second minimum, keeping only the stronger of the two.
     - TIMESTAMPS: The 'time_in' field MUST be formatted as a string (e.g., "00:19:23"). Do NOT use decimals.
     
     OUTPUT FORMAT (a "graphics" array):
