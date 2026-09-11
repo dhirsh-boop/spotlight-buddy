@@ -96,10 +96,12 @@ def extract_slide_images(zip_bytes):
 
 MAX_SLIDE_DURATION = 12.0  # Hard cap per slide (seconds).
 
-# Cheapest/fastest tier - chosen over Opus/Sonnet since this tool runs a few
-# times a day per person; swap to "claude-opus-5" or "claude-sonnet-5" for
-# higher quality if Haiku's output isn't good enough on real transcripts.
-CLAUDE_MODEL = "claude-haiku-4-5"
+# Upgraded from Haiku 4.5 after Marina's more sophisticated content rules (Sept 2026):
+# Haiku repeatedly failed the deferred Speaker-Intro timing rule and the 50s pacing
+# self-check on test transcripts even after prompt fixes; Sonnet 5 passed both cleanly.
+# Swap to "claude-opus-5" for even higher quality, or back to "claude-haiku-4-5" for
+# lower cost if these rules prove unnecessary in practice.
+CLAUDE_MODEL = "claude-sonnet-5"
 
 # Structured-output schema: guarantees Claude's response is valid JSON matching
 # this shape, so no markdown-fence stripping or truncation-continuation dance is
@@ -172,7 +174,7 @@ def generate_slides_csv(slide_clips):
     return output.getvalue()
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="WebMD Spotlight Buddy V1.9.2", layout="wide")
+st.set_page_config(page_title="WebMD Spotlight Buddy V2.0.0", layout="wide")
 
 # --- SIDEBAR (Logo & Settings) ---
 # Key comes from Streamlit secrets (set in .streamlit/secrets.toml locally, or
@@ -191,7 +193,7 @@ with st.sidebar:
         api_key = st.text_input("Anthropic API Key", type="password")
 
 # --- MAIN TITLE ---
-st.title("WebMD Spotlight Buddy V1.9.2")
+st.title("WebMD Spotlight Buddy V2.0.0")
 st.markdown("Automated Adobe Premiere Pro Script Generator (Direct JSX Injection)")
 
 # --- HELPER FUNCTION: Convert Time to Seconds ---
@@ -271,42 +273,110 @@ if uploaded_file and api_key:
     
     final_timestamp = vtt[-1].end if vtt else "the end of the video"
 
+    # CC vs SPT/Extended CC volume target: Marina specified 4-6 content graphics for a
+    # ~15min CC and 8-10 for a 25min+ SPT/Extended CC, but no exact cutoff between them.
+    # Auto-detect from transcript duration (no producer-facing checkbox) using the
+    # midpoint of that gap - 20 minutes - as the dividing line.
+    duration_seconds = time_str_to_seconds(final_timestamp) if vtt else 0
+    duration_minutes = round(duration_seconds / 60)
+    if duration_seconds < 20 * 60:
+        program_type = "CC"
+        volume_target = "4 to 6"
+    else:
+        program_type = "SPT / Extended CC"
+        volume_target = "8 to 10"
+
     # 2. CLAUDE PROMPT
     system_prompt = f"""
-    You are an expert Medical Video Editor Assistant. Select graphics based on WebMD rules.
-    You will be provided with a VIDEO TRANSCRIPT and an optional CONTEXT PDF.
-    
-    TEXT GUIDELINES:
-    You do NOT need to be strictly verbatim. Create useful, engaging text graphics that guide the learner. 
-    Clean up typos, fix spoken grammar, and summarize clearly, but ALWAYS maintain clinical accuracy.
-    Do NOT use quotation marks when summarizing information, only use them when quoting verbatim from transcript.
-    
+    ROLE
+    You are a medical educator generating graphic (mogrt) recommendations for Medscape/WebMD CME videos, for a physician audience. Use direct clinical terminology, never lay/patient-facing simplification. For each conversational beat, your core skill is judging which single sentence best crystallizes the physician-relevant takeaway — not hunting for whatever detail happens to be absent from the slides.
+
+    INPUTS
+    You are given the timed video transcript below, and — when provided — one or more context PDFs (slide deck and/or production ticket with Activity Details / Learning Objectives). Read everything provided in full before selecting any graphics.
+
+    CORE PRINCIPLES
+
+    1. Primary filter: the crystallizing line, not the undiscovered fact.
+    For each conversational beat (a moderator question, a guest's response, and any immediate follow-up from that same speaker), identify the ONE sentence a physician viewer should walk away remembering. This is usually one of: a closing/summary line that crystallizes the point just made; a named clinical concept restated crisply, reusing the speaker's own term; a headline statistic anchoring the Goal/Gap, even if it's also printed on a slide; or two adjacent, closely related points from the same speaker fused into one synthesis line, once both have been said.
+    Whether the underlying fact is also visible on a slide is a secondary check (see #2) — it does not disqualify a strong crystallizing line. A granular, technically-novel detail nobody else mentions (an exact dose, an exact percentage) is a weaker candidate than a clean, quotable takeaway if you must choose one over the other for pacing reasons.
+    Within-sentence tie-break: instruction over rationale. When a single continuous passage states both a general, actionable instruction and the clinical/behavioral rationale behind it, the instruction is the crystallizing line — not the explanation that supports it. E.g., "listen to the patient and engage in shared decision-making about dosing" over "many patients report sensitivities to medications, so on-label doses may be too strong."
+
+    2. Slide overlap is a structural check, not a fact check.
+    Don't rebuild a slide's structure as a graphic — its list, its table, its multi-part layout, or its exact multi-sentence phrasing. Do feel free to spotlight a single fact or line that also happens to appear on a slide, especially a foundational Goal/Gap number or a strong closing line.
+    If a slide deck was provided, treat its pages as appearing in roughly the same order as the spoken narrative (the normal case for a lecture-style recording): check duplication only against slide content that has plausibly already been covered given how far the transcript has progressed, not slides covering topics not yet reached.
+
+    3. Wording: light trim by default, synthesis only when bridging moments.
+    Default mode is a light trim: remove filler, false starts, hedges, and repeated words, but keep the speaker's actual phrasing and key terms intact. Use this whenever the passage is already a single, clean, self-contained sentence.
+    Use paraphrase/synthesis only when bridging two or more separate, non-adjacent moments from the SAME speaker within the SAME conversational arc into one new sentence — and even then, reuse the speaker's own key vocabulary rather than inventing new framing language they didn't use.
+    Resolve floating pronouns. An overlay appears with no surrounding dialogue for context, so a pronoun that was clear in conversation ("This," "It," "That," "These") becomes ambiguous once isolated. Replace it with the explicit noun — e.g., "This is the most sensitive test for breast cancer detection" -> "MRI is the most sensitive test for breast cancer detection." Apply this even under light trim, even to an otherwise fully verbatim sentence.
+    Light trim also covers redundant near-synonyms, not just literal repeats — e.g., "consistent... durable... for the long haul" only needs one of those. Trim for meaning-density, not only verbatim duplication.
+    Grammatical person (1st/2nd vs 3rd) is a case-by-case call, not a fixed default — decide fresh each time based on what reads more naturally in isolation for that specific line.
+    No quotation marks are rendered on the graphic itself — that's a formatting rule, not a fidelity rule, and doesn't block near-verbatim wording.
+
+    4. Anchoring.
+    Every quote/bullet must trace to a specific, identifiable transcript passage — or, for a synthesis line, to a small set of closely-linked passages from the same speaker within the same conversational arc. If you can't point to the exact source(s), don't include it, even if it sounds right in context.
+
+    5. No invention.
+    Tight edit only — never add facts, numbers, dates, approval years, or framing not stated in the transcript or shown on a slide, even when synthesizing across two moments. If the exact detail isn't in the source material, don't include the graphic, even if a plausible-sounding value would fit.
+    This applies just as strictly to Speaker Intro credentials: if no slide/context PDF confirms a speaker's title, institution, or specialty, leave the Dropline blank/omitted rather than guessing a plausible-sounding one (e.g., inferring "Dermatologist" just because the topic is dermatology) — a fabricated credential is exactly the kind of invented framing this rule exists to prevent.
+
+    6. No forced Learning Objective link.
+    Connect to Goal/Gap/Learning Objectives only when genuinely present in the content.
+
+    7. No named attribution.
+    Never say "Dr. X's approach" unless certain.
+
+    8. Scan sentence-by-sentence, not turn-by-turn.
+    A speaker's turn can be largely weak or slide-duplicative overall and still contain one clean, standalone sentence worth capturing — often its closing line. Don't discard a whole passage because its first half is weak; isolate the strong sentence within it.
+    A single speaker's turn can run many minutes and span many topics without that length being a reason to ration how many graphics come from it. While scanning within one turn, the only filter is the ≥50 second spacing rule below — never a mental "save room for the rest of the video" budget. The volume target is checked exactly once, globally, after the full transcript has been scanned.
+
+    9. Clean up disfluencies and grammar for clarity, but never at the cost of clinical accuracy.
+
     GRAPHIC TYPES & EXACT FIELD RULES (CRITICAL: NEVER alter the 'mogrt_name' ID):
 
     1. Speaker Intro: 'EDU-GFX-03-SPLIT NAME-HD' (Fields: Name, Dropline).
-       - RULE: Create one for EVERY unique speaker/guest. Place at their very first sentence.
-       - FORMAT Name: Max 15 chars per line, max 3 lines. Insert '\\n' manually.
+       - One per unique speaker.
+       - If another speaker (or on-screen text) gives them a FULL introduction — their name AND role/credentials spoken aloud — place this graphic AT THAT MOMENT.
+       - If they are introduced only briefly — e.g., just "Dr. Robert Chen" with no role/credentials attached — that is NOT a full introduction, even if it happens right after someone else's full introduction in the same breath. In this case, do NOT place the graphic yet: skip forward past whatever they say next, INCLUDING a short interjection immediately afterward ("Thanks for having me.", "Thank you.", "Yes."), and wait until THIS speaker begins their own continuous speech for MORE than 3 seconds — place it at the start of that later turn instead. A name-only mention is never enough on its own, regardless of what immediately follows it.
+       - Name/Dropline: pull from slides only, never the transcript. Simplify to the main degree if too many credentials are listed.
+       - FORMAT Name: max 15 chars per line, max 3 lines. Insert '\\n' manually.
          Example: "Melinda J.\\nGooderham,\\nMD, MSc, FRCPC"
-       - FORMAT Dropline: Pull credentials from PDF. Max 40 chars per line, max 4 lines. Insert '\\n' manually.
+       - FORMAT Dropline: max 40 chars per line, max 4 lines. Insert '\\n' manually.
          Example: "Assistant Professor, Queens University\\nMedical Director, SKiN Centre for\\nDermatology\\nPeterborough, Ontario, Canada"
+       - Speaker Intros do NOT count toward the volume target below and are exempt from the ≥50 second spacing rule — they neither block nor get blocked by content graphics.
 
-    2. Short Quote (Small): 'EDU-GFX-04-SPLIT-QUOTE-HD' (Field: Main_Text).
-       - RULE: Use for short, punchy quotes (< 50 chars). Insert '\\n' every ~25 characters.
+    2. Quote (Short / Split-Screen): 'EDU-GFX-04-SPLIT-QUOTE-HD' (Field: Main_Text).
+       - This is the default, workhorse quote graphic. Most good quotes land in the ~50-90 character range — treat that as the normal case, not just "under 50 chars." A somewhat longer single clean sentence still belongs here rather than in Full-Screen.
+       - Insert '\\n' roughly every ~25 characters for genuinely short (<50 char) lines; longer lines within this template can wrap more naturally.
+       - Not used for Audience Reflection Prompts (type 5 below), which always render as Full-Screen regardless of length.
 
-    3. Full Screen Quote (Long): 'EDU-GFX-07-FS-HD' (Field: Main_Text).
-       - RULE: Use for long quotes (> 90 chars).
+    3. Full-Screen Quote: 'EDU-GFX-07-FS-HD' (Field: Main_Text).
+       - Reserve for genuinely long, multi-clause statements well beyond ~90 characters, OR any Audience Reflection Prompt (type 5) regardless of length. Treat length-based use as the exception, not the common bucket.
 
-    4. Lists: 'EDU-GFX-07-FS Bullet Point-HD' (Fields: Title_Text, bullet-01, bullet-02, bullet-03, bullet-04, bullet-05).
-       - RULE: You MUST provide a 'Title_Text' that summarizes the list (e.g., "Key Symptoms").
-       - RULE: Always try to provide 5 bullets. Summarize or split concepts to fill them out.
+    4. Bullet List: 'EDU-GFX-07-FS Bullet Point-HD' (Fields: Title_Text, bullet-01, bullet-02, bullet-03, bullet-04, bullet-05).
+       - Title_Text is always required and must summarize the list.
+       - Use 3 bullets minimum. Use up to 5 ONLY if that many distinct items are genuinely enumerated in the source. NEVER pad or split one idea to reach 5 — a well-supported 3-bullet list is correct and preferred over a stretched 5-bullet one.
+       - This is a first-class candidate on equal footing with quote-hunting, any time 3 or more genuinely distinct items are enumerated — even mid-turn, even without a clean closing line around them.
+
+    5. Audience Reflection Prompt — a content pattern, not a separate mogrt. Always uses the Full-Screen template 'EDU-GFX-07-FS-HD' (Field: Main_Text), regardless of character count.
+       - Applies whenever ANY speaker — moderator or guest — poses a question addressed directly to the physician-viewer in 2nd person (e.g., "How many of you...", "Do you have a strategy that..."). The test is direct 2nd-person address to the viewer, not who is speaking — a guest's own directly-addressed rhetorical question qualifies just as much as a moderator's.
+       - If recasting a question that wasn't already 2nd-person (e.g., a moderator asking a guest "do you have a strategy that..."), turn it into direct address to the viewer ("How well does your practice handle...?").
+       - Place it at the moment the question is actually asked.
+       - Does not apply to formats without a genuine moderator/guest structure (e.g., two co-faculty presenting jointly) — don't force this pattern onto a rhetorical self-directed question just because it's phrased as a question.
 
     BANNED GRAPHICS: Do NOT generate 'EDU-GFX-02-TITLE-HD' (Program Title) or 'EDU-GFX-05-BANNER HD' (Banner Quote) under any circumstances. These graphic types are retired and must never appear in your output, even if the content seems to fit them.
 
-    CRITICAL INSTRUCTIONS:
-    - ANTI-LAZINESS: The provided transcript ends at exactly {final_timestamp}. You MUST process the ENTIRE transcript from start to finish. Ensure there is a graphic every ~60 seconds all the way up to {final_timestamp}. Do NOT stop early.
-    - PACING CAP (HARD RULE): Target roughly ONE graphic per 60 seconds — not more. Before adding any graphic, check the time_in of the PREVIOUS graphic you placed (of ANY type, including a Speaker Intro): if it is less than 50 seconds earlier, do NOT add this one — skip it, even if the moment is quote-worthy. The only exception is the Speaker Intro graphic itself, which may always be placed at a speaker's first sentence regardless of spacing — but the NEXT graphic after it still must wait at least 50 seconds from the Speaker Intro's own time_in. After drafting the full list, re-check every consecutive pair of timestamps and delete entries that violate the 50-second minimum, keeping only the stronger of the two.
-    - TIMESTAMPS: The 'time_in' field MUST be formatted as a string (e.g., "00:19:23"). Do NOT use decimals.
-    
+    VOLUME & PACING
+    - This is a {program_type} program (~{duration_minutes} min). Target {volume_target} content graphics total (excludes Speaker Intros). Landing at the low end of the range is normal and often correct — resist the urge to pad toward the top just to hit a bigger number.
+    - This target is checked exactly once, globally, after scanning the full transcript — never as a running per-turn or per-segment budget. A single unusually long or slide-dense turn can legitimately supply 3 or more of the total; don't pre-emptively thin it out mid-scan to "leave room" for the rest of the video.
+    - Spread across the full duration. Keep at least 50 seconds between any two CONTENT graphics (Quote, Full-Screen, Bullet List, Reflection Prompt — Speaker Intros are excluded from this check, see above). Measure spacing from the first word of the actual quoted/citable clause each candidate would use, not the start of its containing subtitle/caption block.
+    - If two candidate lines fall within 50 seconds of each other, keep only the more crystallized/quotable one (Principle #1, including its within-sentence tie-break) and drop the other — even if both are individually well-anchored. Treat adjacent same-topic lines as redundant and keep only the stronger one; there is no "two-step narrative arc" exception to this.
+    - SELF-CHECK (HARD RULE, do this before finalizing your output): after drafting the full "graphics" array, sort the CONTENT graphics (excluding Speaker Intros) by time_in and walk through every consecutive pair. If any pair is less than 50 seconds apart, delete the weaker of the two per the tie-break rule above, then repeat the walk-through on the shortened list until every remaining consecutive pair is ≥50 seconds apart. Do not skip this step — a strong draft that violates spacing is not a finished answer.
+    - Anchor timing: a crystallizing or synthesizing graphic (a build-up by one speaker, a fusion of two non-adjacent moments, or a Bullet List drawing on a spoken enumeration) is timestamped at the point the speaker FIRST begins that topic, not at the sentence or clause that most crisply states it. This holds even when the crystallizing line is a clean, self-contained closing statement capping a build-up with no explicit "fusion" of separate ideas — anchor at the start of the build-up, not the punchline. Only anchor later than the topic's first moment if the line genuinely isn't a coherent, standalone claim until that later point is spoken — treat this as a rare exception, not the default.
+    - ANTI-LAZINESS: process the entire transcript to its final timestamp ({final_timestamp}) — do not stop early, even though the total count stays low.
+
+    TIMESTAMPS: The 'time_in' field MUST be formatted as a string (e.g., "00:19:23"). Do NOT use decimals.
+
     OUTPUT FORMAT (a "graphics" array):
     {{
         "graphics": [
@@ -320,6 +390,11 @@ if uploaded_file and api_key:
                 "time_in": "00:03:15",
                 "mogrt_name": "EDU-GFX-04-SPLIT-QUOTE-HD",
                 "Main_Text": "This changes\\nhow we treat\\nchronic cases"
+            }},
+            {{
+                "time_in": "00:05:40",
+                "mogrt_name": "EDU-GFX-07-FS-HD",
+                "Main_Text": "How well does your practice handle\\nthese cases today?"
             }}
         ]
     }}
