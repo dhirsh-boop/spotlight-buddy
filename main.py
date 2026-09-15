@@ -135,6 +135,28 @@ GRAPHICS_OUTPUT_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Every field a given MOGRT template can display. The JSX only sets properties present
+# in a graphic's "parameters" dict, so any field Claude legitimately leaves out (a 3-item
+# bullet list, an omitted Dropline when no credentials are confirmed) must still be sent
+# as an explicit empty string - otherwise Premiere shows that field's own placeholder/
+# lorem-ipsum text instead of a blank, since the script never touched it.
+MOGRT_FIELDS = {
+    "EDU-GFX-03-SPLIT NAME-HD": ["Name", "Dropline"],
+    "EDU-GFX-04-SPLIT-QUOTE-HD": ["Main_Text"],
+    "EDU-GFX-07-FS-HD": ["Main_Text"],
+    "EDU-GFX-07-FS Bullet Point-HD": ["Title_Text", "bullet-01", "bullet-02", "bullet-03", "bullet-04", "bullet-05"],
+}
+
+_UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
+
+def fix_literal_unicode_escapes(text):
+    """Claude occasionally types out a Unicode escape (e.g. '\\u2014') as literal
+    characters in structured output instead of the actual glyph (em dash). Decode
+    any such literal escapes back into the real character."""
+    if not isinstance(text, str) or "\\u" not in text:
+        return text
+    return _UNICODE_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 16)), text)
+
 def build_slide_clips(markers, images, default_last_duration=MAX_SLIDE_DURATION):
     """Combine markers + images into slide clip dicts ready for JSX serialization.
     Each slide is capped at MAX_SLIDE_DURATION so the underlying video can breathe
@@ -174,7 +196,7 @@ def generate_slides_csv(slide_clips):
     return output.getvalue()
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="WebMD Spotlight Buddy V2.0.2", layout="wide")
+st.set_page_config(page_title="WebMD Spotlight Buddy V2.0.3", layout="wide")
 
 # --- SIDEBAR (Logo & Settings) ---
 # Key comes from Streamlit secrets (set in .streamlit/secrets.toml locally, or
@@ -193,7 +215,7 @@ with st.sidebar:
         api_key = st.text_input("Anthropic API Key", type="password")
 
 # --- MAIN TITLE ---
-st.title("WebMD Spotlight Buddy V2.0.2")
+st.title("WebMD Spotlight Buddy V2.0.3")
 st.markdown("Automated Adobe Premiere Pro Script Generator (Direct JSX Injection)")
 
 # --- HELPER FUNCTION: Convert Time to Seconds ---
@@ -379,6 +401,8 @@ if uploaded_file and api_key:
 
     TIMESTAMPS: The 'time_in' field MUST be formatted as a string (e.g., "00:19:23"). Do NOT use decimals.
 
+    TEXT FORMATTING: Always type the actual character you mean (e.g. a real em dash) directly into the text. Never spell out a Unicode code point as literal backslash-u-plus-four-hex-digits notation instead of the character itself.
+
     OUTPUT FORMAT (a "graphics" array):
     {{
         "graphics": [
@@ -455,8 +479,15 @@ if uploaded_file and api_key:
                     params = {}
                     for k, v in item.items():
                         if k not in ["time_in", "time", "mogrt_name", "graphic"]:
-                            params[k] = v
-                    
+                            params[k] = fix_literal_unicode_escapes(v)
+
+                    # Explicitly blank out any field this MOGRT supports but Claude
+                    # didn't provide, so the JSX overwrites the template's own
+                    # placeholder text instead of leaving it untouched.
+                    for field in MOGRT_FIELDS.get(m_name, []):
+                        params.setdefault(field, "")
+
+
                     txt_check = params.get("Main_Text", "")
                     if txt_check and txt_check in seen_texts: continue
                     if txt_check: seen_texts.add(txt_check)
