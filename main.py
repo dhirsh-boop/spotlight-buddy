@@ -174,7 +174,7 @@ def generate_slides_csv(slide_clips):
     return output.getvalue()
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="WebMD Spotlight Buddy V2.0.0", layout="wide")
+st.set_page_config(page_title="WebMD Spotlight Buddy V2.0.1", layout="wide")
 
 # --- SIDEBAR (Logo & Settings) ---
 # Key comes from Streamlit secrets (set in .streamlit/secrets.toml locally, or
@@ -193,7 +193,7 @@ with st.sidebar:
         api_key = st.text_input("Anthropic API Key", type="password")
 
 # --- MAIN TITLE ---
-st.title("WebMD Spotlight Buddy V2.0.0")
+st.title("WebMD Spotlight Buddy V2.0.1")
 st.markdown("Automated Adobe Premiere Pro Script Generator (Direct JSX Injection)")
 
 # --- HELPER FUNCTION: Convert Time to Seconds ---
@@ -344,6 +344,7 @@ if uploaded_file and api_key:
        - FORMAT Dropline: max 40 chars per line, max 4 lines. Insert '\\n' manually.
          Example: "Assistant Professor, Queens University\\nMedical Director, SKiN Centre for\\nDermatology\\nPeterborough, Ontario, Canada"
        - Speaker Intros do NOT count toward the volume target below and are exempt from the ≥50 second spacing rule — they neither block nor get blocked by content graphics.
+       - NEVER skip a Speaker Intro for a speaker who has spoken, regardless of transcript length or how few content graphics the video otherwise warrants — this is unconditional and never traded off against the volume target below. Before finalizing your output, verify you have exactly one Speaker Intro for every unique speaker who spoke; add any that are missing.
 
     2. Quote (Short / Split-Screen): 'EDU-GFX-04-SPLIT-QUOTE-HD' (Field: Main_Text).
        - This is the default, workhorse quote graphic. Most good quotes land in the ~50-90 character range — treat that as the normal case, not just "under 50 chars." A somewhat longer single clean sentence still belongs here rather than in Full-Screen.
@@ -357,6 +358,7 @@ if uploaded_file and api_key:
        - Title_Text is always required and must summarize the list.
        - Use 3 bullets minimum. Use up to 5 ONLY if that many distinct items are genuinely enumerated in the source. NEVER pad or split one idea to reach 5 — a well-supported 3-bullet list is correct and preferred over a stretched 5-bullet one.
        - This is a first-class candidate on equal footing with quote-hunting, any time 3 or more genuinely distinct items are enumerated — even mid-turn, even without a clean closing line around them.
+       - "Genuinely enumerated" means the speaker is presenting discrete, separable items the viewer would benefit from seeing itemized — e.g., explicit list cues ("first... second... third", "there are three things I check"), a checklist-style rundown, or named risk factors/symptoms/steps meant to be scanned individually. It does NOT mean any sentence that happens to name a few things in a row as part of ONE continuous thought. If a passage is really a single strong, quotable sentence whose overall point matters more than any one item in it (e.g., "the biggest shift has been moving toward an individualized plan that accounts for X, Y, and Z"), keep it as ONE quote (Short or Full-Screen per length) — do not fragment it into a bullet list just because it is possible to split it. When genuinely unsure, prefer the single quote over fragmenting it.
 
     5. Audience Reflection Prompt — a content pattern, not a separate mogrt. Always uses the Full-Screen template 'EDU-GFX-07-FS-HD' (Field: Main_Text), regardless of character count.
        - Applies whenever ANY speaker — moderator or guest — poses a question addressed directly to the physician-viewer in 2nd person (e.g., "How many of you...", "Do you have a strategy that..."). The test is direct 2nd-person address to the viewer, not who is speaking — a guest's own directly-addressed rhetorical question qualifies just as much as a moderator's.
