@@ -174,7 +174,7 @@ def generate_slides_csv(slide_clips):
     return output.getvalue()
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="WebMD Spotlight Buddy V2.0.1", layout="wide")
+st.set_page_config(page_title="WebMD Spotlight Buddy V2.0.2", layout="wide")
 
 # --- SIDEBAR (Logo & Settings) ---
 # Key comes from Streamlit secrets (set in .streamlit/secrets.toml locally, or
@@ -193,7 +193,7 @@ with st.sidebar:
         api_key = st.text_input("Anthropic API Key", type="password")
 
 # --- MAIN TITLE ---
-st.title("WebMD Spotlight Buddy V2.0.1")
+st.title("WebMD Spotlight Buddy V2.0.2")
 st.markdown("Automated Adobe Premiere Pro Script Generator (Direct JSX Injection)")
 
 # --- HELPER FUNCTION: Convert Time to Seconds ---
@@ -374,7 +374,7 @@ if uploaded_file and api_key:
     - Spread across the full duration. Keep at least 50 seconds between any two CONTENT graphics (Quote, Full-Screen, Bullet List, Reflection Prompt — Speaker Intros are excluded from this check, see above). Measure spacing from the first word of the actual quoted/citable clause each candidate would use, not the start of its containing subtitle/caption block.
     - If two candidate lines fall within 50 seconds of each other, keep only the more crystallized/quotable one (Principle #1, including its within-sentence tie-break) and drop the other — even if both are individually well-anchored. Treat adjacent same-topic lines as redundant and keep only the stronger one; there is no "two-step narrative arc" exception to this.
     - SELF-CHECK (HARD RULE, do this before finalizing your output): after drafting the full "graphics" array, sort the CONTENT graphics (excluding Speaker Intros) by time_in and walk through every consecutive pair. If any pair is less than 50 seconds apart, delete the weaker of the two per the tie-break rule above, then repeat the walk-through on the shortened list until every remaining consecutive pair is ≥50 seconds apart. Do not skip this step — a strong draft that violates spacing is not a finished answer.
-    - Anchor timing: a crystallizing or synthesizing graphic (a build-up by one speaker, a fusion of two non-adjacent moments, or a Bullet List drawing on a spoken enumeration) is timestamped at the point the speaker FIRST begins that topic, not at the sentence or clause that most crisply states it. This holds even when the crystallizing line is a clean, self-contained closing statement capping a build-up with no explicit "fusion" of separate ideas — anchor at the start of the build-up, not the punchline. Only anchor later than the topic's first moment if the line genuinely isn't a coherent, standalone claim until that later point is spoken — treat this as a rare exception, not the default.
+    - Anchor timing (CORRECTED per producer review of a real program — do not anchor early): timestamp EVERY graphic, including a crystallizing or summarizing line and a Bullet List, at the point the words actually used on the graphic are spoken — the same moment a viewer scrubbing the timeline would expect it to appear. Do NOT anchor at the start of a speaker's broader build-up or topic introduction, even for a clean closing/summary line capping several seconds of related speech — anchoring early was tested against a real program and produced graphics appearing 20-50 seconds before they should, which is a worse error than the reverse. The only exception: for a genuine synthesis line fusing two separate, non-adjacent moments from the same speaker into one new sentence, anchor at the LATER of the two source moments (when the fused idea is actually complete), never the earlier one. For a Bullet List, anchor at the point the speaker is actually enumerating the items, not at the start of whatever broader topic introduced them.
     - ANTI-LAZINESS: process the entire transcript to its final timestamp ({final_timestamp}) — do not stop early, even though the total count stays low.
 
     TIMESTAMPS: The 'time_in' field MUST be formatted as a string (e.g., "00:19:23"). Do NOT use decimals.
