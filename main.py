@@ -196,7 +196,7 @@ def generate_slides_csv(slide_clips):
     return output.getvalue()
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="WebMD Spotlight Buddy V2.0.3", layout="wide")
+st.set_page_config(page_title="WebMD Spotlight Buddy V2.0.4", layout="wide")
 
 # --- SIDEBAR (Logo & Settings) ---
 # Key comes from Streamlit secrets (set in .streamlit/secrets.toml locally, or
@@ -215,7 +215,7 @@ with st.sidebar:
         api_key = st.text_input("Anthropic API Key", type="password")
 
 # --- MAIN TITLE ---
-st.title("WebMD Spotlight Buddy V2.0.3")
+st.title("WebMD Spotlight Buddy V2.0.4")
 st.markdown("Automated Adobe Premiere Pro Script Generator (Direct JSX Injection)")
 
 # --- HELPER FUNCTION: Convert Time to Seconds ---
@@ -358,8 +358,7 @@ if uploaded_file and api_key:
 
     1. Speaker Intro: 'EDU-GFX-03-SPLIT NAME-HD' (Fields: Name, Dropline).
        - One per unique speaker.
-       - If another speaker (or on-screen text) gives them a FULL introduction — their name AND role/credentials spoken aloud — place this graphic AT THAT MOMENT.
-       - If they are introduced only briefly — e.g., just "Dr. Robert Chen" with no role/credentials attached — that is NOT a full introduction, even if it happens right after someone else's full introduction in the same breath. In this case, do NOT place the graphic yet: skip forward past whatever they say next, INCLUDING a short interjection immediately afterward ("Thanks for having me.", "Thank you.", "Yes."), and wait until THIS speaker begins their own continuous speech for MORE than 3 seconds — place it at the start of that later turn instead. A name-only mention is never enough on its own, regardless of what immediately follows it.
+       - ALWAYS place it at the moment THIS speaker begins their own continuous speech for MORE than 3 seconds — regardless of how they were introduced, even if another speaker just gave them a full, complete introduction with name and credentials. Do NOT anchor on someone else's introduction of them, however thorough. Skip forward past any short interjection first ("Thanks for having me.", "Thank you.", "Yes.") and wait for their first real, substantial turn.
        - Name/Dropline: pull from slides only, never the transcript. Simplify to the main degree if too many credentials are listed.
        - FORMAT Name: max 15 chars per line, max 3 lines. Insert '\\n' manually.
          Example: "Melinda J.\\nGooderham,\\nMD, MSc, FRCPC"
