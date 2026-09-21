@@ -196,7 +196,7 @@ def generate_slides_csv(slide_clips):
     return output.getvalue()
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="WebMD Spotlight Buddy V2.0.4", layout="wide")
+st.set_page_config(page_title="WebMD Spotlight Buddy V2.0.5", layout="wide")
 
 # --- SIDEBAR (Logo & Settings) ---
 # Key comes from Streamlit secrets (set in .streamlit/secrets.toml locally, or
@@ -215,7 +215,7 @@ with st.sidebar:
         api_key = st.text_input("Anthropic API Key", type="password")
 
 # --- MAIN TITLE ---
-st.title("WebMD Spotlight Buddy V2.0.4")
+st.title("WebMD Spotlight Buddy V2.0.5")
 st.markdown("Automated Adobe Premiere Pro Script Generator (Direct JSX Injection)")
 
 # --- HELPER FUNCTION: Convert Time to Seconds ---
@@ -369,7 +369,7 @@ if uploaded_file and api_key:
 
     2. Quote (Short / Split-Screen): 'EDU-GFX-04-SPLIT-QUOTE-HD' (Field: Main_Text).
        - This is the default, workhorse quote graphic. Most good quotes land in the ~50-90 character range — treat that as the normal case, not just "under 50 chars." A somewhat longer single clean sentence still belongs here rather than in Full-Screen.
-       - Insert '\\n' roughly every ~25 characters for genuinely short (<50 char) lines; longer lines within this template can wrap more naturally.
+       - This template does NOT auto-wrap text — it renders as a single line that overflows and gets visually cut off if too long. ALWAYS insert '\\n' manually to break it into multiple lines, roughly every ~25-30 characters, no matter how long the quote is. Never leave more than ~30 characters on one line.
        - Not used for Audience Reflection Prompts (type 5 below), which always render as Full-Screen regardless of length.
 
     3. Full-Screen Quote: 'EDU-GFX-07-FS-HD' (Field: Main_Text).
